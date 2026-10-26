@@ -1,0 +1,15 @@
+build/
+build-*/
+build_*/
+dist/
+external/
+deps/
+stage/
+stage-*/
+*.zip
+*.sha256
+*.png
+.DS_Store
+compile_commands.json
+build-output.log
+!Resources/MacPressor-UI.png
