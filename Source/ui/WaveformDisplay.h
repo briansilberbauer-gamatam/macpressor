@@ -21,15 +21,15 @@ public:
 
 private:
     void timerCallback() override;
-    void pullNewSamples();
 
     static constexpr int historySize = 1024;
 
     MacPressorAudioProcessor& processor;
     std::array<float, historySize> history {};
     int historyCount = 0;
-    uint32_t lastWriteIndex = 0;
     float displayGainReduction = 0.0f;
+    int silentFrames = 0;
+    bool hostBypassed = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformDisplay)
 };

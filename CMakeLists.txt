@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(MacPressor VERSION 1.0.0 LANGUAGES C CXX)
+project(MacPressor VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,6 +107,26 @@ if(MACPRESSOR_BUILD_TESTS)
             juce::juce_recommended_warning_flags)
 
     add_test(NAME macpressor_dsp COMMAND $<TARGET_FILE:MacPressorTests>)
+
+    # End-to-end processor tests: host buffer layouts, channel counts, block
+    # sizes, host bypass and the waveform telemetry the editor reads. These are
+    # platform-agnostic regressions for behaviour that only shows up in real
+    # hosts (notably on Windows), so they run on every CI platform.
+    juce_add_console_app(MacPressorProcessorTests PRODUCT_NAME "MacPressorProcessorTests")
+
+    target_sources(MacPressorProcessorTests PRIVATE ${MACPRESSOR_SOURCES} Tests/ProcessorTests.cpp)
+    target_include_directories(MacPressorProcessorTests PRIVATE Source)
+    target_compile_definitions(MacPressorProcessorTests PRIVATE ${MACPRESSOR_DEFINITIONS})
+    target_link_libraries(MacPressorProcessorTests
+        PRIVATE
+            MacPressorAssets
+            juce::juce_audio_utils
+            juce::juce_dsp
+            juce::juce_gui_extra
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    add_test(NAME macpressor_processor COMMAND $<TARGET_FILE:MacPressorProcessorTests>)
 endif()
 
 if(MACPRESSOR_BUILD_HOST_TEST)

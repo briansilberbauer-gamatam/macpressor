@@ -4,5 +4,5 @@
 
 namespace macpressor
 {
-inline const juce::String version { "1.0.0" };
+inline const juce::String version { "1.0.1" };
 }

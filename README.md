@@ -24,6 +24,18 @@ plugin parameters. VST3 hosts may also display the standard VST3 **Bypass**
 parameter, which is required by the format and is not part of MacPressor's
 interface.
 
+### Scope status
+
+The live scope also reports what the host is doing, which is the quickest way
+to tell a routing problem from a broken compressor:
+
+| Footer text | Meaning |
+| :--- | :--- |
+| `48.0 kHz / 2 CH` | Audio is arriving and being processed. |
+| `AWAITING HOST AUDIO` | No block has reached the plug-in yet (transport stopped, or the host is not calling `processBlock`). |
+| `NO INPUT SIGNAL / CHECK ROUTING` | Blocks are arriving but they are silent; check the track input, the bus layout, or an upstream mute/solo. |
+| `HOST BYPASS / DRY` | The host has the unit bypassed, so the audio is dry by design. Re-enable the plug-in in the host's mixer. |
+
 ## Voice design
 
 Each voice has its own fixed detection high-pass, soft-knee threshold, ratio,
@@ -58,22 +70,29 @@ The project reuses the local JUCE 8.0.8 and sysroot caches when present:
 ./scripts/build.sh
 ```
 
-The build produces the VST3, Standalone, DSP tests, VST3 host smoke test and
-headless screenshot renderer. The script follows the local sysroot layout from
-`../plugin_poc` so the build works offline.
+The build produces the VST3, Standalone, DSP tests, processor tests, VST3 host
+smoke test and headless screenshot renderer. The script follows the local
+sysroot layout from `../plugin_poc` so the build works offline.
 
 ## Tests
 
 ```bash
 ./build/MacPressorTests_artefacts/Release/MacPressorTests
+./build/MacPressorProcessorTests_artefacts/Release/MacPressorProcessorTests
 ./build/MacPressorHostSmokeTest_artefacts/Release/MacPressorHostSmokeTest \
   dist/MacPressor.vst3
 ```
 
-The host test verifies that the VST3 exposes exactly one parameter, that all
-four voices process audio, that latency is zero, and that state round-trips.
+The DSP tests cover the compressor curve itself. The processor tests drive
+`processBlock` the way hosts do: stereo and mono buffers, a mono `prepareToPlay`
+followed by stereo blocks (a Windows host pattern that used to mute a channel),
+full-ring and zero-length blocks, host bypass, and the waveform telemetry the
+scope reads. The host test additionally verifies that the VST3 exposes exactly
+one parameter, that all four voices process audio, that latency is zero, that
+the wrapper path actually reduces peaks, and that state round-trips.
 
-Render a UI preview:
+Render a UI preview (the renderer also verifies that the scope contains a live
+waveform and exits non-zero if it is blank):
 
 ```bash
 xvfb-run -a ./build/MacPressorScreenshot_artefacts/Release/MacPressorScreenshot \
@@ -89,9 +108,10 @@ machined source switches. No visible fasteners.
 ## CI / releases
 
 `.github/workflows/build.yml` builds Windows x64, Linux x64 and a macOS
-Universal binary, runs the tests and packages `.zip` + `.sha256` artifacts.
-Pushing a `v*` tag (or running the workflow manually with a release tag)
-publishes a GitHub Release.
+Universal binary, runs the DSP, processor and VST3 host tests, renders and
+verifies the waveform UI on Linux and Windows, and packages `.zip` + `.sha256`
+artifacts. Pushing a `v*` tag (or running the workflow manually with a release
+tag) publishes a GitHub Release.
 
 ## License
 

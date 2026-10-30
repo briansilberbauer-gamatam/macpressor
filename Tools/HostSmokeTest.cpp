@@ -141,6 +141,29 @@ int main (int argc, char** argv)
 
         check (finite, "all four voice modes produce finite output through the VST3 wrapper");
 
+        // The DSP tests exercise the compressor class directly. This check goes
+        // through the real VST3 wrapper, so a wrapper/host problem that leaves the
+        // signal dry (for example a stuck host bypass) fails the release build.
+        voiceParameter.setValueNotifyingHost (1.0f);
+
+        float inputPeak = 0.0f;
+        float outputPeak = 0.0f;
+
+        for (int block = 0; block < 160; ++block)
+        {
+            fillTone (buffer, (4 * 12 + block) * 512);
+            inputPeak = juce::jmax (inputPeak, buffer.getMagnitude (0, buffer.getNumSamples()));
+
+            instance->processBlock (buffer, midi);
+
+            outputPeak = juce::jmax (outputPeak, buffer.getMagnitude (0, buffer.getNumSamples()));
+            finite = finite && allFinite (buffer);
+        }
+
+        check (finite, "compression through the VST3 wrapper stays finite");
+        check (outputPeak < inputPeak * 0.90f,
+               "the compressor reduces peak level through the VST3 wrapper");
+
         voiceParameter.beginChangeGesture();
         voiceParameter.setValueNotifyingHost (1.0f);
         voiceParameter.endChangeGesture();

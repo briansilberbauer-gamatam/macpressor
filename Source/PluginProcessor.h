@@ -15,10 +15,16 @@ public:
     ~MacPressorAudioProcessor() override;
 
     using juce::AudioProcessor::processBlock;
+    using juce::AudioProcessor::processBlockBypassed;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    /** The host can bypass the plug-in from its own mixer. Keep the audio dry, but
+        keep the scope and meters fed so the editor never looks dead while bypassed.
+    */
+    void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -68,10 +74,19 @@ public:
     static constexpr int waveformSize = 8192;
     static constexpr int waveformMask = waveformSize - 1;
 
-    uint32_t getWaveformWriteIndex() const noexcept
+    /** Number of valid samples currently held by the waveform ring (0 .. waveformSize). */
+    uint32_t getWaveformValidSamples() const noexcept
     {
-        return waveformWriteIndex.load (std::memory_order_acquire);
+        return waveformValidSamples.load (std::memory_order_relaxed);
     }
+
+    /** Copies the newest ring samples, oldest first. Returns the number of samples copied.
+
+        This is the only read path the editor uses. Because the ring position is a
+        wrapped index, callers must never treat it as a sample count - that mistake
+        makes the scope collapse to an empty window every time the ring wraps.
+    */
+    int copyLatestWaveformSamples (float* destination, int maxSamples) const noexcept;
 
     float getWaveformSample (uint32_t index) const noexcept
     {
@@ -79,8 +94,18 @@ public:
             .load (std::memory_order_relaxed);
     }
 
+    /** True when the host dispatched the last block through its bypass path. */
+    bool isHostBypassed() const noexcept { return hostBypassed.load (std::memory_order_relaxed); }
+
+    /** True once the audio thread has delivered samples to the scope since prepare. */
+    bool hasWaveformSamples() const noexcept { return getWaveformValidSamples() > 0; }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    void pushWaveformSamples (const juce::AudioBuffer<float>&, int activeChannels, int numSamples) noexcept;
+    void publishMeters (const juce::AudioBuffer<float>&, int activeChannels, int numSamples,
+                        float inputPeak, float gainReductionDb) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* modeParam = nullptr;
@@ -96,8 +121,9 @@ private:
 
     std::array<std::atomic<float>, waveformSize> waveformRing {};
     std::atomic<uint32_t> waveformWriteIndex { 0 };
+    std::atomic<uint32_t> waveformValidSamples { 0 };
+    std::atomic<bool> hostBypassed { false };
 
-    int preparedChannels = 2;
     int currentVoice = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MacPressorAudioProcessor)

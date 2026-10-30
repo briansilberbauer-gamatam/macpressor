@@ -23,37 +23,20 @@ void WaveformDisplay::timerCallback()
     else
         displayGainReduction = juce::jmax (0.0f, displayGainReduction - 0.65f);
 
-    pullNewSamples();
+    hostBypassed = processor.isHostBypassed();
+
+    // The processor owns the ring-buffer maths: it always returns the newest
+    // samples, oldest first, even immediately after the ring has wrapped.
+    historyCount = processor.copyLatestWaveformSamples (history.data(), historySize);
+
+    float currentPeak = 0.0f;
+
+    for (int i = 0; i < historyCount; ++i)
+        currentPeak = juce::jmax (currentPeak, std::abs (history[static_cast<size_t> (i)]));
+
+    silentFrames = currentPeak > 1.0e-5f ? 0 : silentFrames + 1;
+
     repaint();
-}
-
-void WaveformDisplay::pullNewSamples()
-{
-    const uint32_t writeIndex = processor.getWaveformWriteIndex();
-
-    if (writeIndex == lastWriteIndex)
-        return;
-
-    if (writeIndex < lastWriteIndex)
-        historyCount = 0;
-
-    lastWriteIndex = writeIndex;
-
-    const int available = static_cast<int> (writeIndex);
-    const int count = juce::jlimit (0, historySize, available);
-
-    if (count <= 0)
-    {
-        historyCount = 0;
-        return;
-    }
-
-    const uint32_t start = writeIndex - static_cast<uint32_t> (count);
-
-    for (int i = 0; i < count; ++i)
-        history[static_cast<size_t> (i)] = processor.getWaveformSample (start + static_cast<uint32_t> (i));
-
-    historyCount = count;
 }
 
 void WaveformDisplay::paint (juce::Graphics& g)
@@ -101,9 +84,12 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
     {
         juce::Graphics::ScopedSaveState state (g);
-        juce::Path screenClip;
-        screenClip.addRoundedRectangle (screen.reduced (1.0f), corner - 1.0f);
-        g.reduceClipRegion (screenClip);
+
+        // A plain rectangular clip is sufficient here (the plot is inset well
+        // inside the rounded screen) and avoids depending on path-clip support in
+        // the platform renderer - JUCE uses Direct2D on Windows, where keeping the
+        // scope's drawing path simple is the safest option.
+        g.reduceClipRegion (inner.toNearestInt());
 
         // Grid.
         static constexpr float dbLines[] = { 6.0f, 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -30.0f, -36.0f };
@@ -244,6 +230,12 @@ void WaveformDisplay::paint (juce::Graphics& g)
         {
             g.setColour (crimsonSubtle.withAlpha (0.55f));
             g.fillRect (plot.getX(), midY, plot.getWidth(), 0.8f);
+
+            g.setColour (textMuted.withAlpha (0.95f));
+            g.setFont (font (6.8f, FontWeight::semibold, 0.18f));
+            g.drawText ("AWAITING AUDIO  /  PLAY THE HOST TRANSPORT",
+                        plot.withTrimmedTop (plot.getHeight() * 0.5f + 12.0f).withHeight (12.0f),
+                        juce::Justification::centred, false);
         }
 
         // Glass reflection across the scope.
@@ -266,9 +258,11 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.drawText ("LIVE OUTPUT WAVEFORM", header.withTrimmedLeft (18.0f).withTrimmedTop (9.0f).withHeight (15.0f),
                 juce::Justification::centredLeft, false);
 
-    g.setColour (textMuted);
+    g.setColour (hostBypassed ? crimsonBright : textMuted);
     g.setFont (font (5.8f, FontWeight::regular, 0.15f));
-    g.drawText ("POST-DYNAMICS / MONO SUM", header.withTrimmedLeft (18.0f).withTrimmedTop (24.0f).withHeight (10.0f),
+    g.drawText (hostBypassed ? "HOST BYPASS  /  DRY MONITOR"
+                             : "POST-DYNAMICS / MONO SUM",
+                header.withTrimmedLeft (18.0f).withTrimmedTop (24.0f).withHeight (10.0f),
                 juce::Justification::centredLeft, false);
 
     const auto rightHeader = header.withTrimmedRight (10.0f);
@@ -291,7 +285,9 @@ void WaveformDisplay::paint (juce::Graphics& g)
                 juce::Justification::centredRight, false);
     g.setColour (displayGainReduction > 0.25f ? crimsonBright : textSecondary);
     g.setFont (font (8.3f, FontWeight::semibold, 0.04f));
-    g.drawText ("-" + juce::String (displayGainReduction, 1) + " dB",
+    g.drawText (displayGainReduction > 0.05f
+                    ? "-" + juce::String (displayGainReduction, 1) + " dB"
+                    : juce::String ("0.0 dB"),
                 rightHeader.withTrimmedLeft (rightHeader.getWidth() - 218.0f)
                     .withWidth (110.0f).withTrimmedTop (21.0f).withHeight (13.0f),
                 juce::Justification::centredRight, false);
@@ -307,12 +303,38 @@ void WaveformDisplay::paint (juce::Graphics& g)
                 juce::Justification::centredLeft, false);
 
     const double rate = processor.getSampleRate();
-    const juce::String rateText = rate > 0.0 ? juce::String (rate / 1000.0, 1) + " kHz  /  "
-                                                                   + juce::String (processor.getTotalNumOutputChannels())
-                                                                   + " CH"
-                                             : "NO AUDIO";
+    juce::String statusText;
+    auto statusColour = textMuted;
 
-    g.drawText (rateText, footer.withTrimmedRight (12.0f).withTrimmedTop (7.0f),
+    if (hostBypassed)
+    {
+        statusText = "HOST BYPASS  /  DRY";
+        statusColour = crimsonBright;
+    }
+    else if (! processor.hasWaveformSamples())
+    {
+        statusText = "AWAITING HOST AUDIO";
+        statusColour = textSecondary;
+    }
+    else if (silentFrames > 18)
+    {
+        // Distinguishes "the host is feeding us silence / a mismatched bus"
+        // from "the plug-in is bypassed or broken".
+        statusText = "NO INPUT SIGNAL  /  CHECK ROUTING";
+        statusColour = textSecondary;
+    }
+    else if (rate > 0.0)
+    {
+        statusText = juce::String (rate / 1000.0, 1) + " kHz  /  "
+                   + juce::String (processor.getTotalNumOutputChannels()) + " CH";
+    }
+    else
+    {
+        statusText = "NO AUDIO";
+    }
+
+    g.setColour (statusColour);
+    g.drawText (statusText, footer.withTrimmedRight (12.0f).withTrimmedTop (7.0f),
                 juce::Justification::centredRight, false);
 }
 } // namespace macpressor::ui

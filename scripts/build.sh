@@ -45,6 +45,9 @@ echo "Built artefacts:"
 [ -d "$ROOT/dist/MacPressor.vst3" ] && echo "  VST3        $ROOT/dist/MacPressor.vst3"
 [ -x "$ROOT/dist/MacPressor" ] && echo "  Standalone  $ROOT/dist/MacPressor"
 echo "  Tests       $BUILD_DIR/MacPressorTests_artefacts/$CONFIG/MacPressorTests"
+if [ -x "$BUILD_DIR/MacPressorProcessorTests_artefacts/$CONFIG/MacPressorProcessorTests" ]; then
+    echo "  Proc tests  $BUILD_DIR/MacPressorProcessorTests_artefacts/$CONFIG/MacPressorProcessorTests"
+fi
 if [ -x "$BUILD_DIR/MacPressorHostSmokeTest_artefacts/$CONFIG/MacPressorHostSmokeTest" ]; then
     echo "  Host test   $BUILD_DIR/MacPressorHostSmokeTest_artefacts/$CONFIG/MacPressorHostSmokeTest"
 fi

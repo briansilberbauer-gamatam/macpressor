@@ -31,7 +31,7 @@ jobs:
         run: |
           cmake -S . -B build-windows -A x64 `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DMACPRESSOR_BUILD_SCREENSHOT=OFF `
+            -DMACPRESSOR_BUILD_SCREENSHOT=ON `
             -DMACPRESSOR_BUILD_HOST_TEST=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -47,12 +47,47 @@ jobs:
           & "build-windows\MacPressorTests_artefacts\Release\MacPressorTests.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run processor tests
+        shell: pwsh
+        run: |
+          & "build-windows\MacPressorProcessorTests_artefacts\Release\MacPressorProcessorTests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run VST3 host test
         shell: pwsh
         run: |
           & "build-windows\MacPressorHostSmokeTest_artefacts\Release\MacPressorHostSmokeTest.exe" `
             "build-windows\MacPressor_artefacts\Release\VST3\MacPressor.vst3"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Renders the real editor on Windows and asserts that the scope contains a
+      # live crimson waveform. This is the regression that the old workflow never
+      # exercised (it disabled the screenshot target on Windows).
+      - name: Render and verify the waveform UI
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force "dist" | Out-Null
+          $exe = "build-windows\MacPressorScreenshot_artefacts\Release\MacPressorScreenshot.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--out=dist/macpressor-ui-windows.png" -PassThru
+          if (-not $proc.WaitForExit(90000)) {
+            $proc.Kill()
+            throw "The UI renderer did not finish within 90 seconds."
+          }
+          $shotExit = $proc.ExitCode
+          if (Test-Path "dist\macpressor-ui-windows.png") {
+            Get-Item "dist\macpressor-ui-windows.png" | Format-List Name, Length
+          }
+          if ($shotExit -ne 0) { exit $shotExit }
+
+      - name: Upload Windows UI render
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MacPressorUI-Windows
+          path: dist/macpressor-ui-windows.png
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Package Windows distribution
         shell: pwsh
@@ -101,6 +136,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config zip \
+            xvfb xauth \
             libasound2-dev \
             libx11-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev \
             libxcomposite-dev libxrender-dev libxfixes-dev libxi-dev libsm-dev libice-dev \
@@ -125,7 +161,7 @@ jobs:
         run: |
           cmake -S . -B build-linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DMACPRESSOR_BUILD_SCREENSHOT=OFF \
+            -DMACPRESSOR_BUILD_SCREENSHOT=ON \
             -DMACPRESSOR_BUILD_HOST_TEST=ON
 
       - name: Build
@@ -134,10 +170,30 @@ jobs:
       - name: Run DSP tests
         run: ./build-linux/MacPressorTests_artefacts/Release/MacPressorTests
 
+      - name: Run processor tests
+        run: ./build-linux/MacPressorProcessorTests_artefacts/Release/MacPressorProcessorTests
+
       - name: Run VST3 host test
         run: |
           ./build-linux/MacPressorHostSmokeTest_artefacts/Release/MacPressorHostSmokeTest \
             build-linux/MacPressor_artefacts/Release/VST3/*.vst3
+
+      # Renders the editor headlessly and fails if the scope is blank. Keeps the
+      # waveform telemetry/painting path covered on every change.
+      - name: Render and verify the waveform UI
+        run: |
+          mkdir -p dist
+          timeout 120 xvfb-run -a ./build-linux/MacPressorScreenshot_artefacts/Release/MacPressorScreenshot \
+            --out=dist/macpressor-ui-linux.png
+
+      - name: Upload Linux UI render
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MacPressorUI-Linux
+          path: dist/macpressor-ui-linux.png
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Package Linux distribution
         run: |
@@ -212,6 +268,9 @@ jobs:
 
       - name: Run DSP tests
         run: ./build-macos/MacPressorTests_artefacts/Release/MacPressorTests
+
+      - name: Run processor tests
+        run: ./build-macos/MacPressorProcessorTests_artefacts/Release/MacPressorProcessorTests
 
       - name: Run VST3 host test
         run: |
